@@ -1,73 +1,71 @@
-const express = require("express")
+const express = require("express");
+const sleep = require("sleep");
+const app = express();
+const cors = require("cors");
+const path = require("path");
+const fse = require("fs-extra");
+const PORT = 3001;
+const multiparty = require("multiparty");
 
-const app = express()
+const UPLOADDIR = path.join(__dirname, "/files");
 
-const fs = require('fs')
-const path = require('path')
-const fse = require("fse")
-const PORT = 3000
-
-const UPLOADDIR = path.resolve(__dirname, "/files")
-
+app.use(cors());
 app.post("/bigFileUpload", (req, res, next) => {
-    const multiparty = require("multiparty")
+  const form = new multiparty.Form();
 
-    const form = multiparty.Form()
+  form.parse(req, async (err, fields, files) => {
+    if (err) {
+      return res.status(500).send(err.message);
+    }
 
-    form.parse(req, async (err, fields, files) => {
-        if (err) {
-            next(err)
-        }
+    const chunk = files.chunk[0];
+    const index = fields.index;
+    const fileName = fields.filename;
+    const chunkDir = `${UPLOADDIR}/${fileName}`;
 
-        const chunk = files.chunk
-
-        const hash = fields.hash
-
-        const fileName = fields.filename
-
-        const chunkDir = `${UPLOADDIR}/${fileName}`
-
-        if (!fse.existsSync(chunkDir)) {
-            fse.mkdirs(chunkDir)
-        }
-
-        await fse.move(chunk.path, `${chunkDir}/${hash}`)
-
-        res.send("Received")
-    })
-})
-
+    try {
+      if (!fse.existsSync(chunkDir)) {
+        fse.mkdirsSync(chunkDir);
+      }
+      await fse.move(chunk.path, `${chunkDir}/${index}`);
+    } catch (err) {
+      console.log(err.message);
+      return res.status(500).send(err.message);
+    }
+    sleep.sleep(1);
+    res.send("Received");
+  });
+});
 
 app.get("/merge", async (req, res, next) => {
+  const TARGET = path.join(__dirname, "/target");
+  const fileName = `${Date.now()}-${req.query.filename}`;
+  const filePath = req.query.filepath;
+  try {
+    await mergeFiles(`${TARGET}/${fileName}`, filePath);
+  } catch (err) {
+    console.log(err);
+    return res.status(500).send(err.message);
+  }
 
-    const TARGET = path.resolve(__dirname, "/target")
-    const filename = req.params.filename
+  res.send("merged");
+});
 
-    await mergeFiles(`${TARGET}${filename}`, filename)
+const mergeFiles = async (destPath, filePath) => {
+  const chunkDir = `${UPLOADDIR}/${filePath}`;
+  const chunkPaths = await fse.readdir(chunkDir);
 
-    res.send(
-        "merged"
-    )
+  await fse.writeFile(destPath, "");
 
-})
+  chunkPaths.map(chunkPath => {
+    const currFilePath = `${chunkDir}/${chunkPath}`;
+    fse.appendFileSync(destPath, fse.readFileSync(currFilePath));
+    fse.unlinkSync(currFilePath);
+  });
 
-
-const mergeFiles = async (filePath, fileName) => {
-
-    const chunkDir = `${UPLOADDIR}/${fileName}`
-    const chunkPaths = await fse.readdir(chunkDir)
-
-    await fse.writeFile(filePath, "")
-
-    chunkPaths.map((chunkPath) => {
-        const currFilePath = `${chunkDir}/${chunkPath}`
-        fse.appendFileSync(filePath, fse.readFileSync(currFilePath))
-        fse.unlinkSync(currFilePath)
-    })
-
-    fse.rmdirSync(chunkDir)
-}
+  fse.rmdirSync(chunkDir);
+};
 
 app.listen(PORT, () => {
-    console.log(`Listening on ${PORT}`);
-})
+  console.log(`Listening on ${PORT}`);
+});
